@@ -21,6 +21,19 @@ export class ProximityFeedback {
     this.proximity = clamp(value, 0, 100);
   }
 
+  pulseNow(value = this.proximity): void {
+    const proximity = clamp(value, 0, 100);
+
+    if (proximity <= 3) {
+      navigator.vibrate?.(0);
+      return;
+    }
+
+    const pulse = Math.round(35 + proximity * 1.45);
+    const pause = Math.round(clamp(180 - proximity * 1.2, 35, 180));
+    navigator.vibrate?.([pulse, pause, pulse]);
+  }
+
   stop(): void {
     this.running = false;
 
@@ -38,10 +51,9 @@ export class ProximityFeedback {
     }
 
     this.playBeep();
-    const interval = 900 - this.proximity * 6.5;
-    const vibration = Math.round(25 + this.proximity * 0.75);
+    const interval = 720 - this.proximity * 5.4;
 
-    navigator.vibrate?.(this.proximity > 8 ? vibration : 0);
+    this.pulseNow();
     this.timer = window.setTimeout(() => this.schedule(), clamp(interval, 160, 900));
   }
 

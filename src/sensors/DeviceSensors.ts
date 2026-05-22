@@ -96,6 +96,7 @@ export class DeadReckoningTracker {
   private position: Vector3 = { x: 0, y: 0, z: 0 };
   private lastStepAt = 0;
   private heading = 0;
+  private lastImpulse = 0;
 
   async requestMotionPermission(): Promise<void> {
     const motionEvent = DeviceMotionEvent as typeof DeviceMotionEvent & {
@@ -131,27 +132,38 @@ export class DeadReckoningTracker {
   }
 
   private readonly handleMotion = (event: DeviceMotionEvent): void => {
-    const acceleration = event.accelerationIncludingGravity;
+    const acceleration = event.acceleration;
+    const gravityAcceleration = event.accelerationIncludingGravity;
 
-    if (!acceleration) {
+    if (!acceleration && !gravityAcceleration) {
       return;
     }
 
-    const magnitude = Math.sqrt(
-      Math.pow(acceleration.x ?? 0, 2) + Math.pow(acceleration.y ?? 0, 2) + Math.pow(acceleration.z ?? 0, 2)
-    );
+    const linearMagnitude = acceleration
+      ? Math.sqrt(Math.pow(acceleration.x ?? 0, 2) + Math.pow(acceleration.y ?? 0, 2) + Math.pow(acceleration.z ?? 0, 2))
+      : 0;
+    const gravityMagnitude = gravityAcceleration
+      ? Math.sqrt(
+          Math.pow(gravityAcceleration.x ?? 0, 2) +
+            Math.pow(gravityAcceleration.y ?? 0, 2) +
+            Math.pow(gravityAcceleration.z ?? 0, 2)
+        )
+      : 9.81;
+    const impulse = Math.max(linearMagnitude, Math.abs(gravityMagnitude - 9.81));
     const now = performance.now();
 
-    if (magnitude < 13.2 || now - this.lastStepAt < 520) {
+    if (impulse < 1.25 || impulse <= this.lastImpulse || now - this.lastStepAt < 430) {
+      this.lastImpulse = impulse;
       return;
     }
 
     const radians = (this.heading * Math.PI) / 180;
     this.position = {
-      x: this.position.x + Math.sin(radians) * 0.35,
+      x: this.position.x + Math.sin(radians) * 0.42,
       y: 0,
-      z: this.position.z + Math.cos(radians) * 0.35
+      z: this.position.z + Math.cos(radians) * 0.42
     };
     this.lastStepAt = now;
+    this.lastImpulse = impulse;
   };
 }

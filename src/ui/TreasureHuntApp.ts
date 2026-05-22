@@ -3,7 +3,7 @@ import { createRoomService } from "../network/createRoomService";
 import type { RoomService } from "../network/RoomService";
 import { DeviceSensors, DeadReckoningTracker, type CompassState } from "../sensors/DeviceSensors";
 import { HIDING_SECONDS, MAX_KEYS, MIN_KEYS, PHASE_LABELS, READY_COUNTDOWN_SECONDS, SEEKING_SECONDS } from "../simulation/constants";
-import { bearingTo, horizontalDistance, normalizeDegrees, proximityPercent, relativeDirectionLabel, signedAngleDelta } from "../simulation/math";
+import { bearingTo, clamp, horizontalDistance, normalizeDegrees, proximityPercent, relativeDirectionLabel, signedAngleDelta } from "../simulation/math";
 import {
   bothPlayersReady,
   buildHidingPatch,
@@ -42,7 +42,7 @@ export class TreasureHuntApp {
   private setupView: SetupView = "home";
   private selectedKeyCount = 1;
   private joinCode = "";
-  private objectLabel = "";
+  private lastMarkedKeyIndex: number | null = null;
   private room: RoomState | null = null;
   private role: PlayerRole | null = null;
   private error = "";
@@ -76,11 +76,12 @@ export class TreasureHuntApp {
     });
 
     this.tickHandle = window.setInterval(() => this.tick(), 500);
+    this.installDebugHooks();
     this.render();
   }
 
   private tick(): void {
-    if (this.room?.phase === "scanning" && this.mediaReady) {
+    if (this.room?.phase === "scanning" && this.role === "hider" && this.mediaReady) {
       const progress = this.scanEstimator.addSample({
         heading: this.compass.heading,
         pitch: this.compass.pitch,
@@ -98,9 +99,10 @@ export class TreasureHuntApp {
       return;
     }
 
-    if (this.room?.phase === "treasure") {
+    if (this.room?.phase === "treasure" && this.role === "seeker") {
       const guidance = this.getGuidance();
       this.feedback.setProximity(guidance?.proximity ?? 0);
+      this.feedback.pulseNow(guidance?.proximity ?? 0);
     }
 
     if (this.room?.phase === "hiding" || this.room?.phase === "seeking" || this.room?.phase === "treasure") {
@@ -235,6 +237,8 @@ export class TreasureHuntApp {
   }
 
   private renderSafety(): string {
+    const isHider = this.role === "hider";
+
     return this.shell(`
       <section class="camera-stage">
         <video class="camera-video" autoplay muted playsinline></video>
@@ -256,9 +260,16 @@ export class TreasureHuntApp {
         <button class="primary-button" data-action="permissions">
           Kamera ve Sensörleri Aç
         </button>
-        <button class="secondary-button" data-action="start-scan" ${this.mediaReady ? "" : "disabled"}>
-          Kalibre Et ve Taramaya Geç
-        </button>
+        ${
+          isHider
+            ? `<button class="secondary-button" data-action="start-scan" ${this.mediaReady ? "" : "disabled"}>
+                Kalibre Et ve Evi Tara
+              </button>`
+            : `<button class="secondary-button" disabled>
+                Saklayan evi tarayacak
+              </button>
+              <p class="muted">Senin tarama yapmana gerek yok. Saklayan planı oluşturunca aynı oda planı bu telefona aktarılacak.</p>`
+        }
       </section>
     `);
   }
@@ -267,6 +278,23 @@ export class TreasureHuntApp {
     const room = this.requireRoom();
     const complete = this.scanProgress >= 100;
     const title = this.role === "hider" ? "Evi tara" : "Oyun alanını kalibre et";
+
+    if (this.role === "seeker") {
+      return this.shell(`
+        <section class="camera-stage waiting-bg">
+          ${this.renderRoomPlanOverlay()}
+        </section>
+        <section class="hud top-hud">
+          ${this.renderRoomHeader()}
+        </section>
+        <section class="bottom-sheet compact">
+          <p class="eyebrow">Oda Planı</p>
+          <h2>Saklayan tarıyor</h2>
+          <p class="muted">Evi sen taramayacaksın. Saklayan taramayı bitirince plan bu telefona otomatik gelecek.</p>
+          <div class="metric-row"><span>Plan durumu</span><strong>Bekleniyor</strong></div>
+        </section>
+      `);
+    }
 
     return this.shell(`
       <section class="camera-stage">
@@ -303,13 +331,15 @@ export class TreasureHuntApp {
 
     if (this.role === "seeker") {
       return this.shell(`
-        <section class="camera-stage waiting-bg"></section>
+        <section class="camera-stage waiting-bg">
+          ${this.renderRoomPlanOverlay()}
+        </section>
         <section class="bottom-sheet">
           ${this.renderRoomHeader()}
           <p class="eyebrow">Bekleme</p>
           <h2>Saklayan anahtarları gizliyor</h2>
           <div class="large-timer">${formatClock(remaining)}</div>
-          <p class="muted">Arama süresi Saklayan bitirdiğinde başlayacak.</p>
+          <p class="muted">Oda planı alındı. Arama süresi Saklayan bitirdiğinde başlayacak.</p>
         </section>
       `);
     }
@@ -318,6 +348,7 @@ export class TreasureHuntApp {
       <section class="camera-stage">
         <video class="camera-video" autoplay muted playsinline></video>
         <div class="scan-reticle active"></div>
+        ${this.renderKeyAnchorMarker()}
       </section>
       <section class="hud top-hud">
         ${this.renderRoomHeader()}
@@ -326,9 +357,8 @@ export class TreasureHuntApp {
       <section class="bottom-sheet compact">
         <p class="eyebrow">Saklama Aşaması</p>
         <h2>Anahtar ${placedCount} / ${room.keyCount}</h2>
-        <input id="object-label" class="text-input" value="${escapeHtml(this.objectLabel)}" placeholder="Nesne adı: yastık, kitaplık..." />
         <button class="primary-button" data-action="mark-key" ${placedCount >= room.keyCount ? "disabled" : ""}>
-          Anahtarı İşaretle
+          Anahtarı Tara
         </button>
         <div class="key-list">${this.renderKeyList(room.keys)}</div>
         <button class="danger-button" data-action="finish-hiding" ${placedCount >= room.keyCount ? "" : "disabled"}>
@@ -346,7 +376,9 @@ export class TreasureHuntApp {
       const found = room.keys.filter((key) => key.found).length;
 
       return this.shell(`
-        <section class="camera-stage waiting-bg"></section>
+        <section class="camera-stage waiting-bg">
+          ${this.renderRoomPlanOverlay()}
+        </section>
         <section class="bottom-sheet">
           ${this.renderRoomHeader()}
           <p class="eyebrow">Takip</p>
@@ -361,6 +393,9 @@ export class TreasureHuntApp {
     const activeKey = getActiveKey(room);
     const isTreasure = room.phase === "treasure";
     const remaining = getRemainingMs(room.seekEndsAt);
+    const cameraPrompt = this.mediaReady
+      ? ""
+      : `<div class="camera-off"><span>Kamera kapalı</span><button data-action="permissions">Kamerayı Aç</button></div>`;
 
     if (isTreasure) {
       void this.feedback.start().catch(() => undefined);
@@ -371,9 +406,7 @@ export class TreasureHuntApp {
     return this.shell(`
       <section class="camera-stage">
         <video class="camera-video" autoplay muted playsinline></video>
-        <div class="direction-ring">
-          <div class="needle" style="transform: rotate(${guidance?.delta ?? 0}deg)"></div>
-        </div>
+        ${cameraPrompt}
       </section>
       <section class="hud top-hud">
         ${this.renderRoomHeader()}
@@ -382,15 +415,18 @@ export class TreasureHuntApp {
       <section class="bottom-sheet compact">
         <p class="eyebrow">${isTreasure ? "Hazine" : "Bulma Sistemi"}</p>
         <h2>${escapeHtml(guidance?.targetLabel ?? "Hedef aranıyor")}</h2>
+        ${this.renderSeekerCompass(guidance)}
         <div class="compass-readout">
           <span>${escapeHtml(guidance?.directionLabel ?? "Yön bekleniyor")}</span>
-          <strong>${Math.round(Math.abs(guidance?.delta ?? 0))}°</strong>
+          <strong>${formatDistance(guidance?.distance ?? null)}</strong>
         </div>
         ${
           isTreasure
-            ? `<div class="detector-panel"><span>Metal dedektörü aktif</span><strong>${guidance?.proximity ?? 0}%</strong></div>`
+            ? `<div class="detector-panel"><span>Telefon dedektörü aktif</span><strong>${guidance?.proximity ?? 0}%</strong></div>
+               <div class="metric-row"><span>Titreşim</span><strong>${getVibrationLabel(guidance?.proximity ?? 0)}</strong></div>`
             : `<div class="progress-shell proximity"><div class="progress-bar" style="width:${guidance?.proximity ?? 0}%"></div></div>
-               <div class="metric-row"><span>Yakınlık</span><strong>${guidance?.proximity ?? 0}%</strong></div>`
+               <div class="metric-row"><span>Yakınlık</span><strong>${guidance?.proximity ?? 0}%</strong></div>
+               <div class="metric-row"><span>Mesafe</span><strong>${formatDistance(guidance?.distance ?? null)}</strong></div>`
         }
         ${
           isTreasure
@@ -449,8 +485,57 @@ export class TreasureHuntApp {
     }
 
     return keys
-      .map((key) => `<div class="key-row"><span>${key.index}. ${escapeHtml(key.label)}</span><strong>${key.found ? "Alındı" : "Gizli"}</strong></div>`)
+      .map((key) => `<div class="key-row"><span>${escapeHtml(key.label)}</span><strong>${key.found ? "Alındı" : "Gizli"}</strong></div>`)
       .join("");
+  }
+
+  private renderSeekerCompass(guidance: GuidanceState | null): string {
+    const compassOffset = guidance ? clamp(guidance.delta / 90, -1, 1) * 42 : 0;
+
+    return `
+      <div class="seeker-compass" aria-label="Pusula">
+        <div class="compass-track">
+          <span>Sol</span>
+          <span>Ön</span>
+          <span>Sağ</span>
+        </div>
+        <div class="compass-arrow" style="left:${50 + compassOffset}%; transform: translateX(-50%) rotate(${guidance?.delta ?? 0}deg)"></div>
+      </div>
+    `;
+  }
+
+  private renderRoomPlanOverlay(): string {
+    const room = this.requireRoom();
+    const markers = room.keys
+      .map((key, index) => {
+        const left = 25 + (index % 3) * 24;
+        const top = 34 + Math.floor(index / 3) * 20;
+        return `<span class="plan-key" style="left:${left}%;top:${top}%">${key.index}</span>`;
+      })
+      .join("");
+
+    return `
+      <div class="room-plan" aria-label="Oda planı">
+        <div class="room-plan-grid"></div>
+        <span class="plan-origin">Başlangıç</span>
+        ${markers}
+      </div>
+    `;
+  }
+
+  private renderKeyAnchorMarker(): string {
+    const room = this.requireRoom();
+    const index = this.lastMarkedKeyIndex ?? room.keys.at(-1)?.index ?? null;
+
+    if (!index) {
+      return "";
+    }
+
+    return `
+      <div class="key-anchor-marker">
+        <span>${index}. Anahtar</span>
+      </div>
+    `;
   }
 
   private bindEvents(): void {
@@ -467,9 +552,6 @@ export class TreasureHuntApp {
       this.render();
     });
 
-    this.root.querySelector<HTMLInputElement>("#object-label")?.addEventListener("input", (event) => {
-      this.objectLabel = (event.target as HTMLInputElement).value.slice(0, 28);
-    });
   }
 
   private async handleAction(action: string): Promise<void> {
@@ -562,6 +644,8 @@ export class TreasureHuntApp {
         countdownStartsAt: new Date(Date.now() + READY_COUNTDOWN_SECONDS * 1000).toISOString()
       });
     }
+
+    await this.syncRoom(room.id);
   }
 
   private async requestPermissions(): Promise<void> {
@@ -574,11 +658,17 @@ export class TreasureHuntApp {
 
     this.mediaReady = true;
     this.render();
-    await this.attachCameraPreview(true);
+    await this.attachCameraPreview(this.role === "hider");
   }
 
   private async startScan(): Promise<void> {
     const room = this.requireRoom();
+
+    if (this.role !== "hider") {
+      this.notice = "Evi sadece Saklayan tarar. Plan bu telefona otomatik aktarılacak.";
+      return;
+    }
+
     const calibration = {
       originHeading: this.compass.heading,
       originPosition: ZERO,
@@ -589,18 +679,21 @@ export class TreasureHuntApp {
       phase: "scanning",
       calibration
     });
+    await this.syncRoom(room.id);
   }
 
   private boostScan(): void {
-    for (let i = 0; i < 8; i += 1) {
+    const current = this.scanEstimator.getProgress().progress;
+
+    for (let i = 0; i < 16; i += 1) {
       this.scanEstimator.addSample({
-        heading: normalizeDegrees(this.compass.heading + i * 34),
+        heading: normalizeDegrees(this.compass.heading + i * 24),
         pitch: this.compass.pitch + (i % 3) * 8,
         timestamp: performance.now()
       });
     }
 
-    this.scanProgress = this.scanEstimator.getProgress().progress;
+    this.scanProgress = Math.min(100, Math.max(this.scanEstimator.getProgress().progress, current + 35));
   }
 
   private async completeScan(): Promise<void> {
@@ -612,6 +705,7 @@ export class TreasureHuntApp {
     }
 
     await this.service.updateRoom(room.id, buildHidingPatch());
+    await this.syncRoom(room.id);
   }
 
   private async markKey(): Promise<void> {
@@ -622,7 +716,7 @@ export class TreasureHuntApp {
       return;
     }
 
-    const label = this.objectLabel.trim() || `${nextIndex}. Anahtar`;
+    const label = `Anahtar ${nextIndex}`;
     const position = this.capturePosition(1.25 + nextIndex * 0.55);
 
     await this.service.addKey(room.id, {
@@ -630,7 +724,8 @@ export class TreasureHuntApp {
       label,
       position
     });
-    this.objectLabel = "";
+    this.lastMarkedKeyIndex = nextIndex;
+    await this.syncRoom(room.id);
   }
 
   private async finishHiding(): Promise<void> {
@@ -646,23 +741,34 @@ export class TreasureHuntApp {
 
     await this.service.setTreasurePosition(room.id, completedRoom.treasurePosition);
     await this.service.updateRoom(room.id, buildSeekingPatch());
+    await this.syncRoom(room.id);
   }
 
   private async foundKey(): Promise<void> {
     const room = this.requireRoom();
     const activeKey = getActiveKey(room);
+    const isLastKey = room.keys.filter((key) => !key.found).length <= 1;
 
     if (!activeKey) {
       await this.service.updateRoom(room.id, { phase: "treasure" });
+      await this.syncRoom(room.id);
       return;
     }
 
     await this.service.markKeyFound(room.id, activeKey.index);
+    await this.syncRoom(room.id);
+
+    if (isLastKey) {
+      this.feedback.setProximity(55);
+      this.feedback.pulseNow(55);
+      await this.feedback.start().catch(() => undefined);
+    }
   }
 
   private async foundTreasure(): Promise<void> {
     const room = this.requireRoom();
     await this.service.updateRoom(room.id, { phase: "finished", winner: "seeker" });
+    await this.syncRoom(room.id);
   }
 
   private setRoom(room: RoomState): void {
@@ -674,6 +780,12 @@ export class TreasureHuntApp {
     });
   }
 
+  private async syncRoom(roomId: string): Promise<RoomState> {
+    const room = await this.service.getRoom(roomId);
+    this.room = room;
+    return room;
+  }
+
   private reset(): void {
     this.unsubscribeRoom?.();
     this.unsubscribeRoom = null;
@@ -682,7 +794,7 @@ export class TreasureHuntApp {
     this.setupView = "home";
     this.selectedKeyCount = 1;
     this.joinCode = "";
-    this.objectLabel = "";
+    this.lastMarkedKeyIndex = null;
     this.error = "";
     this.notice = "";
     this.mediaReady = false;
@@ -722,7 +834,7 @@ export class TreasureHuntApp {
   private capturePosition(distanceMeters: number): Vector3 {
     const tracked = this.xr.capturePoint(this.tracker.getPosition());
 
-    if (horizontalDistance(tracked, ZERO) > 0.15) {
+    if (horizontalDistance(tracked, ZERO) > 0.75) {
       return tracked;
     }
 
@@ -747,7 +859,7 @@ export class TreasureHuntApp {
     const targetLabel =
       room.phase === "treasure"
         ? "Saklayanın Telefonu"
-        : `${room.activeKeyIndex}. Anahtar: ${getActiveKey(room)?.label ?? "Nesne"}`;
+        : `${room.activeKeyIndex}. Anahtar`;
     const bearing = bearingTo(current, target);
     const delta = signedAngleDelta(this.compass.heading, bearing);
     const distance = horizontalDistance(current, target);
@@ -759,6 +871,27 @@ export class TreasureHuntApp {
       delta,
       directionLabel: relativeDirectionLabel(delta)
     };
+  }
+
+  private installDebugHooks(): void {
+    const debugWindow = window as Window & {
+      render_game_to_text?: () => string;
+      advanceTime?: (ms: number) => void;
+    };
+
+    debugWindow.render_game_to_text = () =>
+      JSON.stringify({
+        role: this.role,
+        phase: this.room?.phase ?? "setup",
+        code: this.room?.code ?? null,
+        keyCount: this.room?.keyCount ?? 0,
+        keysPlaced: this.room?.keys.length ?? 0,
+        activeKeyIndex: this.room?.activeKeyIndex ?? null,
+        mediaReady: this.mediaReady,
+        scanProgress: this.scanProgress,
+        guidance: this.room ? this.getGuidance() : null
+      });
+    debugWindow.advanceTime = () => this.tick();
   }
 
   private requireRoom(): RoomState {
@@ -785,4 +918,36 @@ function escapeHtml(value: string): string {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function formatDistance(distance: number | null): string {
+  if (distance === null || !Number.isFinite(distance)) {
+    return "-- m";
+  }
+
+  if (distance < 0.45) {
+    return "çok yakın";
+  }
+
+  if (distance > 9.5) {
+    return "10+ m";
+  }
+
+  return `${distance.toFixed(1)} m`;
+}
+
+function getVibrationLabel(proximity: number): string {
+  if (proximity >= 80) {
+    return "Çok güçlü";
+  }
+
+  if (proximity >= 45) {
+    return "Artıyor";
+  }
+
+  if (proximity >= 12) {
+    return "Hafif";
+  }
+
+  return "Uzak";
 }
