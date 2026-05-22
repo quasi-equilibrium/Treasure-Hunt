@@ -1,0 +1,25 @@
+{
+  "name": "treasure-hunt-ar",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "tsc && vite build",
+    "preview": "vite preview --host 0.0.0.0",
+    "test": "vitest run",
+    "test:ui": "playwright test"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.43.4",
+    "three": "^0.164.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.44.1",
+    "@types/three": "^0.164.0",
+    "jsdom": "^24.1.0",
+    "typescript": "^5.4.5",
+    "vite": "^5.2.11",
+    "vitest": "^1.6.0"
+  }
+}
