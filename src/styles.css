@@ -410,6 +410,24 @@ h2 {
   transition: width 180ms ease;
 }
 
+.scan-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.45rem;
+}
+
+.scan-metrics span {
+  min-height: 2.25rem;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(248, 247, 242, 0.13);
+  border-radius: 8px;
+  background: rgba(248, 247, 242, 0.07);
+  color: rgba(248, 247, 242, 0.78);
+  font-size: 0.75rem;
+  font-weight: 900;
+}
+
 .proximity .progress-bar {
   background: #2a9d8f;
 }

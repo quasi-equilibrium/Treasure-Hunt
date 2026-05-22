@@ -2,6 +2,39 @@ import { expect, test } from "@playwright/test";
 
 async function mockDeviceApis(page: import("@playwright/test").Page) {
   await page.addInitScript(() => {
+    class MockDeviceOrientationEvent extends Event {
+      alpha: number | null;
+      beta: number | null;
+      gamma: number | null;
+      webkitCompassHeading?: number;
+
+      constructor(type: string, init: DeviceOrientationEventInit & { webkitCompassHeading?: number } = {}) {
+        super(type);
+        this.alpha = init.alpha ?? 0;
+        this.beta = init.beta ?? 0;
+        this.gamma = init.gamma ?? 0;
+        this.webkitCompassHeading = init.webkitCompassHeading;
+      }
+
+      static async requestPermission() {
+        return "granted" as PermissionState;
+      }
+    }
+
+    class MockDeviceMotionEvent extends Event {
+      static async requestPermission() {
+        return "granted" as PermissionState;
+      }
+    }
+
+    Object.defineProperty(window, "DeviceOrientationEvent", {
+      configurable: true,
+      value: MockDeviceOrientationEvent
+    });
+    Object.defineProperty(window, "DeviceMotionEvent", {
+      configurable: true,
+      value: MockDeviceMotionEvent
+    });
     Object.defineProperty(navigator, "mediaDevices", {
       configurable: true,
       value: {
@@ -49,9 +82,8 @@ test("seeker skips scanning and gets compass search UI", async ({ context, page 
   await expect(seeker.getByRole("heading", { name: "Saklayan tarıyor" })).toBeVisible();
   await expect(seeker.getByText("Evi sen taramayacaksın")).toBeVisible();
 
-  for (let i = 0; i < 3; i += 1) {
-    await page.getByRole("button", { name: "Alanı Tara" }).click();
-  }
+  await expect(page.getByRole("button", { name: "Tarama Tamamlandı" })).toBeDisabled();
+  await page.evaluate(() => (window as Window & { treasureHuntTest?: { forceScanComplete: () => void } }).treasureHuntTest?.forceScanComplete());
   await page.getByRole("button", { name: "Tarama Tamamlandı" }).click();
   await page.getByRole("button", { name: "Anahtarı Tara" }).click();
   await expect(page.locator(".key-anchor-marker")).toBeVisible();

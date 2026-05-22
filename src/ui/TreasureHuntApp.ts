@@ -3,7 +3,7 @@ import { createRoomService } from "../network/createRoomService";
 import type { RoomService } from "../network/RoomService";
 import { DeviceSensors, DeadReckoningTracker, type CompassState } from "../sensors/DeviceSensors";
 import { HIDING_SECONDS, MAX_KEYS, MIN_KEYS, PHASE_LABELS, READY_COUNTDOWN_SECONDS, SEEKING_SECONDS } from "../simulation/constants";
-import { bearingTo, clamp, horizontalDistance, normalizeDegrees, proximityPercent, relativeDirectionLabel, signedAngleDelta } from "../simulation/math";
+import { bearingTo, clamp, horizontalDistance, proximityPercent, relativeDirectionLabel, signedAngleDelta } from "../simulation/math";
 import {
   bothPlayersReady,
   buildHidingPatch,
@@ -82,11 +82,13 @@ export class TreasureHuntApp {
 
   private tick(): void {
     if (this.room?.phase === "scanning" && this.role === "hider" && this.mediaReady) {
-      const progress = this.scanEstimator.addSample({
-        heading: this.compass.heading,
-        pitch: this.compass.pitch,
-        timestamp: performance.now()
-      });
+      const progress = this.compass.supported
+        ? this.scanEstimator.addSample({
+            heading: this.compass.heading,
+            pitch: this.compass.pitch,
+            timestamp: performance.now()
+          })
+        : this.scanEstimator.getProgress();
 
       if (progress.progress !== this.scanProgress) {
         this.scanProgress = progress.progress;
@@ -276,7 +278,8 @@ export class TreasureHuntApp {
 
   private renderScanning(): string {
     const room = this.requireRoom();
-    const complete = this.scanProgress >= 100;
+    const scanState = this.scanEstimator.getProgress();
+    const complete = scanState.canComplete;
     const title = this.role === "hider" ? "Evi tara" : "Oyun alanını kalibre et";
 
     if (this.role === "seeker") {
@@ -308,13 +311,18 @@ export class TreasureHuntApp {
         <p class="eyebrow">${PHASE_LABELS[room.phase]}</p>
         <h2>${title}</h2>
         <div class="progress-shell">
-          <div class="progress-bar" style="width:${this.scanProgress}%"></div>
+          <div class="progress-bar" style="width:${scanState.progress}%"></div>
         </div>
         <div class="metric-row">
           <span>Tarama</span>
-          <strong>${this.scanProgress}%</strong>
+          <strong>${scanState.progress}%</strong>
         </div>
-        <button class="secondary-button" data-action="boost-scan">Alanı Tara</button>
+        <div class="scan-metrics">
+          <span>Yön: ${Math.round(scanState.coverage)}%</span>
+          <span>Hareket: ${Math.round(scanState.motionScore)}%</span>
+          <span>Süre: ${Math.floor(scanState.elapsedMs / 1000)} sn</span>
+        </div>
+        <p class="muted">${escapeHtml(scanState.status)}</p>
         ${
           this.role === "hider"
             ? `<button class="primary-button" data-action="scan-complete" ${complete ? "" : "disabled"}>Tarama Tamamlandı</button>`
@@ -591,7 +599,7 @@ export class TreasureHuntApp {
           await this.startScan();
           break;
         case "boost-scan":
-          this.boostScan();
+          this.forceScanForLocalTest();
           break;
         case "scan-complete":
           await this.completeScan();
@@ -649,12 +657,11 @@ export class TreasureHuntApp {
   }
 
   private async requestPermissions(): Promise<void> {
-    this.cameraStream = await this.sensors.requestCamera();
-
-    await this.sensors.requestOrientation().catch(() => {
-      this.notice = "Pusula izni alınamadı; fallback yön tahmini kullanılacak.";
+    await this.sensors.requestOrientation();
+    await this.tracker.requestMotionPermission().catch(() => {
+      this.notice = "Hareket izni alınamadı; mesafe tahmini daha sınırlı olabilir.";
     });
-    await this.tracker.requestMotionPermission().catch(() => undefined);
+    this.cameraStream = await this.sensors.requestCamera();
 
     this.mediaReady = true;
     this.render();
@@ -669,6 +676,8 @@ export class TreasureHuntApp {
       return;
     }
 
+    this.scanEstimator.reset();
+    this.scanProgress = 0;
     const calibration = {
       originHeading: this.compass.heading,
       originPosition: ZERO,
@@ -682,18 +691,14 @@ export class TreasureHuntApp {
     await this.syncRoom(room.id);
   }
 
-  private boostScan(): void {
-    const current = this.scanEstimator.getProgress().progress;
-
-    for (let i = 0; i < 16; i += 1) {
-      this.scanEstimator.addSample({
-        heading: normalizeDegrees(this.compass.heading + i * 24),
-        pitch: this.compass.pitch + (i % 3) * 8,
-        timestamp: performance.now()
-      });
+  private forceScanForLocalTest(): void {
+    if (!isLocalTestHost()) {
+      return;
     }
 
-    this.scanProgress = Math.min(100, Math.max(this.scanEstimator.getProgress().progress, current + 35));
+    this.scanEstimator.forceComplete();
+    this.scanProgress = this.scanEstimator.getProgress().progress;
+    this.render();
   }
 
   private async completeScan(): Promise<void> {
@@ -702,6 +707,10 @@ export class TreasureHuntApp {
     if (this.role !== "hider") {
       this.notice = "Saklayan saklama aşamasını başlatacak.";
       return;
+    }
+
+    if (!this.scanEstimator.isComplete()) {
+      throw new Error("Tarama yeterli değil. Bar dolmadan bu aşama bitmez.");
     }
 
     await this.service.updateRoom(room.id, buildHidingPatch());
@@ -892,6 +901,12 @@ export class TreasureHuntApp {
         guidance: this.room ? this.getGuidance() : null
       });
     debugWindow.advanceTime = () => this.tick();
+
+    if (isLocalTestHost()) {
+      (debugWindow as Window & { treasureHuntTest?: { forceScanComplete: () => void } }).treasureHuntTest = {
+        forceScanComplete: () => this.forceScanForLocalTest()
+      };
+    }
   }
 
   private requireRoom(): RoomState {
@@ -950,4 +965,8 @@ function getVibrationLabel(proximity: number): string {
   }
 
   return "Uzak";
+}
+
+function isLocalTestHost(): boolean {
+  return ["localhost", "127.0.0.1"].includes(window.location.hostname);
 }

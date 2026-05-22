@@ -19,3 +19,12 @@ Verification:
 - npm test gecti.
 - npm run test:ui gecti.
 - develop-web-game Playwright client calisti; screenshot ve render_game_to_text kontrol edildi.
+
+Latest fix:
+- Alan Tara yapay ilerleme butonu kaldiriliyor; scan estimator artik sure + yon kapsama + cihaz aci degisimi yeterli degilse 100 yapmiyor.
+- Tarama Tamamlandi butonu tiklansa bile estimator yeterli degilse hiding asamasina gecmiyor.
+- iPhone pusula izni kamera izninden once isteniyor; pusula yoksa oyun fallback ile devam etmiyor, acik hata veriyor.
+
+Latest verification:
+- scan estimator icin hizli dolmama unit testi eklendi.
+- Tarama ekraninda butonun 0% iken pasif kaldigi gorsel olarak kontrol edildi.

@@ -15,6 +15,7 @@ export class DeviceSensors {
   private heading = 0;
   private pitch = 0;
   private listening = false;
+  private hasReading = false;
 
   async requestCamera(): Promise<MediaStream> {
     if (this.cameraStream) {
@@ -38,6 +39,10 @@ export class DeviceSensors {
   }
 
   async requestOrientation(): Promise<void> {
+    if (typeof DeviceOrientationEvent === "undefined") {
+      throw new Error("Bu tarayıcı pusula sensörünü desteklemiyor.");
+    }
+
     const orientationEvent = DeviceOrientationEvent as typeof DeviceOrientationEvent & {
       requestPermission?: () => Promise<PermissionState>;
     };
@@ -46,7 +51,7 @@ export class DeviceSensors {
       const permission = await orientationEvent.requestPermission();
 
       if (permission !== "granted") {
-        throw new Error("Pusula izni verilmedi.");
+        throw new Error("Pusula izni verilmedi. iPhone Ayarlar > Safari > Hareket ve Yön Erişimi açık olmalı.");
       }
     }
 
@@ -69,7 +74,7 @@ export class DeviceSensors {
     return {
       heading: this.heading,
       pitch: this.pitch,
-      supported: this.listening
+      supported: this.listening && (this.hasReading || typeof DeviceOrientationEvent !== "undefined")
     };
   }
 
@@ -84,8 +89,13 @@ export class DeviceSensors {
     const webkitHeading = (event as DeviceOrientationEvent & { webkitCompassHeading?: number }).webkitCompassHeading;
     const alpha = event.alpha ?? 0;
 
+    if (typeof webkitHeading !== "number" && event.alpha === null && event.beta === null) {
+      return;
+    }
+
     this.heading = normalizeDegrees(typeof webkitHeading === "number" ? webkitHeading : 360 - alpha);
     this.pitch = event.beta ?? 0;
+    this.hasReading = true;
 
     const state = this.getCompass();
     this.listeners.forEach((listener) => listener(state));
