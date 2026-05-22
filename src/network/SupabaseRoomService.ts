@@ -44,7 +44,7 @@ export class SupabaseRoomService implements RoomService {
       throw new RoomServiceError("Anahtar sayısı 1 ile 5 arasında olmalı.");
     }
 
-    for (let attempt = 0; attempt < 5; attempt += 1) {
+    for (let attempt = 0; attempt < 30; attempt += 1) {
       const draft = createInitialRoom(generateRoomCode(), keyCount);
       const { data, error } = await this.client
         .from("rooms")

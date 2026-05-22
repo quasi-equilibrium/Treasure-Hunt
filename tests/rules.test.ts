@@ -10,8 +10,8 @@ describe("game rules", () => {
     expect(isValidKeyCount(6)).toBe(false);
   });
 
-  it("generates six-character room codes", () => {
-    expect(generateRoomCode()).toMatch(/^[A-Z2-9]{6}$/);
+  it("generates three-digit room codes", () => {
+    expect(generateRoomCode()).toMatch(/^[1-9][0-9]{2}$/);
   });
 
   it("creates a lobby room with hider and seeker not ready", () => {

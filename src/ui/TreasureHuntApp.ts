@@ -151,8 +151,8 @@ export class TreasureHuntApp {
           <button class="ghost-button top-left" data-action="back">Geri</button>
           <p class="eyebrow">Bulan Paneli</p>
           <h1>Oda kodunu gir</h1>
-          <input id="join-code" class="code-input" maxlength="6" value="${escapeHtml(this.joinCode)}" placeholder="ABC123" autocomplete="off" />
-          <button class="primary-button" data-action="join-room" ${this.joinCode.trim().length >= 4 ? "" : "disabled"}>
+          <input id="join-code" class="code-input" maxlength="3" inputmode="numeric" pattern="[0-9]*" value="${escapeHtml(this.joinCode)}" placeholder="123" autocomplete="one-time-code" />
+          <button class="primary-button" data-action="join-room" ${this.joinCode.trim().length === 3 ? "" : "disabled"}>
             Oyuna Katıl
           </button>
         </section>
@@ -425,7 +425,7 @@ export class TreasureHuntApp {
         ${content}
         ${this.error ? `<div class="toast error">${escapeHtml(this.error)}</div>` : ""}
         ${this.notice ? `<div class="toast notice">${escapeHtml(this.notice)}</div>` : ""}
-        ${this.service.kind === "local" ? `<div class="service-badge">Demo Modu: Supabase env yok</div>` : ""}
+        ${this.service.kind === "local" ? `<div class="service-badge">Demo: kod sadece bu cihazda</div>` : ""}
       </div>
     `;
   }
@@ -462,7 +462,7 @@ export class TreasureHuntApp {
 
     this.root.querySelector<HTMLInputElement>("#join-code")?.addEventListener("input", (event) => {
       const target = event.target as HTMLInputElement;
-      this.joinCode = target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6);
+      this.joinCode = target.value.replace(/\D/g, "").slice(0, 3);
       target.value = this.joinCode;
       this.render();
     });

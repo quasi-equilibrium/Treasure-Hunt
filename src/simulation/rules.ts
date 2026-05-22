@@ -6,14 +6,10 @@ export function isValidKeyCount(count: number): boolean {
 }
 
 export function generateRoomCode(): string {
-  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  let code = "";
+  const value = new Uint32Array(1);
+  crypto.getRandomValues(value);
 
-  crypto.getRandomValues(new Uint32Array(ROOM_CODE_LENGTH)).forEach((value) => {
-    code += alphabet[value % alphabet.length];
-  });
-
-  return code;
+  return (100 + (value[0] % 900)).toString().padStart(ROOM_CODE_LENGTH, "0");
 }
 
 export function createInitialRoom(code: string, keyCount: number): RoomState {
