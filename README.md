@@ -12,6 +12,13 @@ npm run dev
 
 Supabase kullanmak için `supabase/migrations/20260522100000_initial_treasure_hunt.sql` migration dosyasını projenize uygulayın ve `.env` içine `VITE_SUPABASE_URL` ile `VITE_SUPABASE_ANON_KEY` değerlerini yazın. Env yoksa uygulama tek cihaz/tarayıcı geliştirme demosu için localStorage modunda açılır.
 
+GitHub Pages deploy için aynı değerleri repo secret olarak ekleyin:
+
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_ANON_KEY`
+
+Secret yoksa canlı site açılır, ancak iki farklı telefon aynı odaya bağlanamaz; demo modu her cihazın kendi localStorage alanını kullanır.
+
 ## Mobil Test
 
 Kamera ve WebXR için HTTPS gerekir. Gerçek telefon testinde Vercel/Netlify preview veya HTTPS tünel kullanın. Android Chrome + ARCore gerçek WebXR için ana hedeftir. iPhone Safari tarafında `immersive-ar` güvenilir kabul edilmez; fallback kamera/pusula akışı kullanılır.
