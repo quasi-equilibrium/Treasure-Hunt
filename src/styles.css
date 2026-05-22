@@ -25,7 +25,7 @@ body {
   overflow-x: hidden;
   background:
     linear-gradient(rgba(16, 20, 17, 0.7), rgba(16, 20, 17, 0.9)),
-    url("/icon.svg") center 14% / 18rem no-repeat,
+    url("../public/icon.svg") center 14% / 18rem no-repeat,
     #101411;
 }
 
@@ -317,7 +317,7 @@ h2 {
 .waiting-bg {
   background:
     linear-gradient(rgba(16, 20, 17, 0.34), rgba(16, 20, 17, 0.96)),
-    url("/icon.svg") center / 14rem no-repeat,
+    url("../public/icon.svg") center / 14rem no-repeat,
     #1b211e;
 }
 
